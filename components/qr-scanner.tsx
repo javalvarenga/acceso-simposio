@@ -1,278 +1,244 @@
 "use client"
 
-import type React from "react"
-
 import { useState, useRef, useEffect } from "react"
-import { Button } from "@/components/ui/button"
-import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
-import { CheckCircle2, XCircle, Camera, Keyboard } from "lucide-react"
-import { verifyQRCode } from "@/lib/actions"
-import { Input } from "@/components/ui/input"
-import { Label } from "@/components/ui/label"
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { Card } from "@/components/ui/card"
+import { api } from "@/services/api" 
+import { CheckCircle, XCircle, AlertCircle } from "lucide-react"
 
-type ScanResult = {
-  success: boolean
-  message: string
-  participantName?: string
-  participantEmail?: string
-}
+export default function Html5QRCodeScanner() {
+  const [qrValue, setQrValue] = useState<string | null>(null)
+  const [logs, setLogs] = useState<string[]>([])
+  const [status, setStatus] = useState<string>("Esperando inicialización")
+  const [scannerReady, setScannerReady] = useState(false)
+  const [respuestaServidor, setRespuestaServidor] = useState<number | null>(null)
 
-export default function QRScanner() {
-  const [result, setResult] = useState<ScanResult | null>(null)
-  const [loading, setLoading] = useState(false)
-  const [manualCode, setManualCode] = useState("")
-  const [scanning, setScanning] = useState(false)
-  const [cameraError, setCameraError] = useState<string | null>(null)
 
-  const videoRef = useRef<HTMLVideoElement>(null)
-  const canvasRef = useRef<HTMLCanvasElement>(null)
-  const streamRef = useRef<MediaStream | null>(null)
+  const scannerRef = useRef<HTMLDivElement>(null)
+  const scannerInstance = useRef<any>(null)
 
-  // Función para verificar un código QR
-  const verifyCode = async (code: string) => {
-    if (!code || loading) return
-
-    setLoading(true)
-    try {
-      const verificationResult = await verifyQRCode(code)
-      setResult(verificationResult)
-      setManualCode("")
-    } catch (error) {
-      setResult({
-        success: false,
-        message: "Error al verificar el código QR. Intente nuevamente.",
-      })
-    } finally {
-      setLoading(false)
-    }
+  // Función para agregar logs
+  const addLog = (message: string) => {
+    console.log(message)
+    setLogs(prev => [...prev, `${new Date().toLocaleTimeString()}: ${message}`])
   }
 
-  // Manejar la entrada manual
-  const handleManualSubmit = (e: React.FormEvent) => {
-    e.preventDefault()
-    verifyCode(manualCode)
-  }
-
-  // Iniciar la cámara
-  const startCamera = async () => {
-    try {
-      setCameraError(null)
-      setScanning(true)
-
-      if (!videoRef.current) return
-
-      // Solicitar acceso a la cámara
-      const stream = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode: "environment" },
-      })
-
-      // Guardar referencia al stream para poder detenerlo después
-      streamRef.current = stream
-
-      // Asignar el stream al elemento de video
-      videoRef.current.srcObject = stream
-      videoRef.current.play()
-
-      // Iniciar el escaneo
-      scanQRCode()
-    } catch (error) {
-      console.error("Error al acceder a la cámara:", error)
-      setCameraError("No se pudo acceder a la cámara. Verifique los permisos del navegador.")
-      setScanning(false)
-    }
-  }
-
-  // Detener la cámara
-  const stopCamera = () => {
-    if (streamRef.current) {
-      streamRef.current.getTracks().forEach((track) => track.stop())
-      streamRef.current = null
-    }
-
-    setScanning(false)
-  }
-
-  // Escanear el código QR
-  const scanQRCode = () => {
-    if (!scanning) return
-
-    const video = videoRef.current
-    const canvas = canvasRef.current
-
-    if (!video || !canvas || video.readyState !== video.HAVE_ENOUGH_DATA) {
-      // Si el video no está listo, intentar de nuevo en el próximo frame
-      requestAnimationFrame(scanQRCode)
-      return
-    }
-
-    const context = canvas.getContext("2d")
-    if (!context) return
-
-    // Establecer dimensiones del canvas según el video
-    canvas.width = video.videoWidth
-    canvas.height = video.videoHeight
-
-    // Dibujar el frame actual del video en el canvas
-    context.drawImage(video, 0, 0, canvas.width, canvas.height)
-
-    // Obtener los datos de la imagen
-    const imageData = context.getImageData(0, 0, canvas.width, canvas.height)
-
-    // Intentar decodificar el código QR
-    try {
-      // Aquí usamos la función global jsQR que será cargada desde un CDN
-      // @ts-ignore - jsQR será cargado desde un CDN
-      const code = window.jsQR?.(imageData.data, imageData.width, imageData.height, {
-        inversionAttempts: "dontInvert",
-      })
-
-      if (code) {
-        // Si se encontró un código QR, detener la cámara y verificar el código
-        stopCamera()
-        verifyCode(code.data)
-        return
-      }
-    } catch (error) {
-      console.error("Error al decodificar QR:", error)
-    }
-
-    // Si no se encontró un código QR, seguir escaneando
-    requestAnimationFrame(scanQRCode)
-  }
-
-  // Limpiar al desmontar el componente
+  // Inicializar cuando el componente se monta
   useEffect(() => {
+    addLog("Componente inicializado")
+    
+    // Cargar la biblioteca Html5-QRCode
+    const script = document.createElement('script')
+    script.src = "https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"
+    script.onload = () => {
+      addLog("Biblioteca Html5-QRCode cargada correctamente")
+      setScannerReady(true)
+    }
+    script.onerror = () => {
+      addLog("Error al cargar la biblioteca Html5-QRCode")
+      setStatus("ERROR: No se pudo cargar la biblioteca")
+    }
+    document.body.appendChild(script)
+
+    // Limpiar al desmontar
     return () => {
-      stopCamera()
+      stopScanner()
     }
   }, [])
 
+  // Iniciar el escáner
+  const startScanner = async () => {
+    try {
+      setStatus("Inicializando escáner...")
+      addLog("Iniciando escáner QR")
+
+      if (!scannerRef.current) {
+        addLog("ERROR: Referencia al div del escáner no disponible")
+        return
+      }
+
+      // Verificar que la biblioteca esté cargada
+      if (typeof window.Html5Qrcode === 'undefined') {
+        addLog("ERROR: Html5Qrcode no está disponible")
+        setStatus("ERROR: Biblioteca no disponible")
+        return
+      }
+
+      // Crear instancia del escáner
+      const html5QrCode = new window.Html5Qrcode("qr-reader")
+      scannerInstance.current = html5QrCode
+      addLog("Instancia de escáner creada")
+
+      // Configurar opciones
+      const config = {
+        fps: 10,
+        qrbox: 250,
+        aspectRatio: 1.0,
+        disableFlip: false,
+      }
+
+      // Iniciar la cámara
+      addLog("Solicitando acceso a la cámara")
+      setStatus("Accediendo a la cámara...")
+      
+      await html5QrCode.start(
+        { facingMode: "environment" }, // Usar cámara trasera si está disponible
+        config,
+        async (qrCodeMessage) => {
+          const limpio = qrCodeMessage.replace(/^https?:\/\/(www\.)?/, "")
+          addLog(`QR detectado: ${limpio}`)
+          setStatus("QR detectado correctamente")
+          stopScanner()
+          setQrValue(limpio)
+        
+          try {
+            const res = await api.post("/participants/scannerQR", {
+              codigoQR: limpio,
+            })
+            const respuesta = res.data?.result?.[0]?.resultado
+            setRespuestaServidor(respuesta)
+            if (respuesta === 1) {
+              setStatus("✅ Asistencia registrada")
+              addLog("Servidor confirmó asistencia.")
+            } else {
+              setStatus("❌ Código QR no permitido")
+              addLog("Servidor rechazó el código.")
+            }
+        
+            addLog(`Respuesta del servidor: ${JSON.stringify(res.data)}`)
+          } catch (err: any) {
+            addLog(`Error al verificar QR: ${err.response?.data?.message || err.message}`)
+          }
+        },
+        (errorMessage) => {
+          // Este callback se llama cuando hay un error en el escaneo (no cuando falla la inicialización)
+          // No hacemos nada porque es normal que se llame cuando no hay QR en la vista
+        }
+      )
+      
+      addLog("Escáner iniciado correctamente")
+      setStatus("Escaneando... Acerca el código QR a la cámara")
+      
+    } catch (error: any) {
+      addLog(`Error al iniciar el escáner: ${error.message || error}`)
+      setStatus(`ERROR: ${error.message || "Error desconocido"}`)
+    }
+  }
+
+  // Detener el escáner
+  const stopScanner = () => {
+    if (scannerInstance.current) {
+      addLog("Deteniendo escáner")
+      
+      try {
+        scannerInstance.current.stop()
+          .then(() => {
+            addLog("Escáner detenido correctamente")
+          })
+          .catch((err: any) => {
+            addLog(`Error al detener el escáner: ${err}`)
+          })
+      } catch (error) {
+        addLog("Error al intentar detener el escáner")
+      }
+      
+      scannerInstance.current = null
+    }
+  }
+
+  // Reiniciar
+  const resetScanner = () => {
+    setQrValue(null)
+    setLogs([])
+    setStatus("Esperando inicialización")
+    stopScanner()
+  }
+
   return (
-    <div className="flex flex-col items-center gap-4">
-      {/* Script para cargar la biblioteca jsQR */}
-      <script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.min.js" async></script>
+    <div className="p-4 max-w-md mx-auto">
+      <h2 className="text-xl font-bold mb-4">Escáner QR</h2>
+      
+      {qrValue && respuestaServidor !== null && (
+        <div
+          className={`mb-4 p-4 border rounded-md flex items-center gap-4 shadow-md transition-all
+            ${respuestaServidor === 1
+              ? "bg-green-50 border-green-300 text-green-800"
+              : "bg-red-50 border-red-300 text-red-800"
+            }`}
+        >
+          {respuestaServidor === 1 ? (
+            <CheckCircle className="w-10 h-10 text-green-600" />
+          ) : (
+            <XCircle className="w-10 h-10 text-red-600" />
+          )}
 
-      {result ? (
-        // Mostrar resultado del escaneo
-        <div className="w-full space-y-4">
-          <Alert className={result.success ? "border-green-500 bg-green-50" : "border-red-500 bg-red-50"}>
-            <div className="flex items-center gap-2">
-              {result.success ? (
-                <CheckCircle2 className="h-5 w-5 text-green-600" />
-              ) : (
-                <XCircle className="h-5 w-5 text-red-600" />
-              )}
-              <AlertTitle className={result.success ? "text-green-800" : "text-red-800"}>
-                {result.success ? "Acceso Registrado" : "Acceso Denegado"}
-              </AlertTitle>
-            </div>
-            <AlertDescription className="mt-2">
-              {result.message}
-              {result.participantName && (
-                <div className="mt-3 p-3 bg-white rounded-md border">
-                  <h3 className="font-medium">Información del Participante:</h3>
-                  <p className="mt-1">Nombre: {result.participantName}</p>
-                  <p>Email: {result.participantEmail}</p>
-                </div>
-              )}
-            </AlertDescription>
-          </Alert>
-
-          <Button className="w-full" onClick={() => setResult(null)}>
-            Escanear otro código
-          </Button>
+          <div>
+            <h3 className="text-lg font-semibold">
+              {respuestaServidor === 1 ? "✅ Asistencia registrada" : "❌ Código QR no permitido"}
+            </h3>
+            <p className="text-sm mt-1 break-all">{qrValue}</p>
+          </div>
         </div>
-      ) : (
-        // Interfaz de escaneo
-        <Tabs defaultValue="camera" className="w-full">
-          <TabsList className="grid w-full grid-cols-2">
-            <TabsTrigger value="camera">
-              <Camera className="h-4 w-4 mr-2" />
-              Cámara
-            </TabsTrigger>
-            <TabsTrigger value="manual">
-              <Keyboard className="h-4 w-4 mr-2" />
-              Manual
-            </TabsTrigger>
-          </TabsList>
-
-          <TabsContent value="camera" className="space-y-4">
-            <div className="relative">
-              {scanning ? (
-                <>
-                  <video ref={videoRef} className="w-full h-64 object-cover rounded-md bg-black" playsInline />
-                  <canvas
-                    ref={canvasRef}
-                    className="hidden" // Oculto, solo se usa para procesar la imagen
-                  />
-                  <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-                    <div className="w-48 h-48 border-2 border-white rounded-lg opacity-70"></div>
-                  </div>
-                  <Button variant="secondary" className="absolute bottom-2 right-2" onClick={stopCamera}>
-                    Cancelar
-                  </Button>
-                </>
-              ) : (
-                <Card className="p-4 flex flex-col items-center justify-center h-64 border-dashed">
-                  {cameraError ? (
-                    <div className="text-center p-4">
-                      <p className="text-sm text-red-600 mb-4">{cameraError}</p>
-                      <Button onClick={startCamera}>Intentar de nuevo</Button>
-                    </div>
-                  ) : (
-                    <div className="text-center">
-                      <Camera className="h-16 w-16 text-gray-300 mx-auto mb-4" />
-                      <p className="text-sm text-gray-500 mb-4">Haz clic para activar la cámara</p>
-                      <Button onClick={startCamera}>Activar Cámara</Button>
-                    </div>
-                  )}
-                </Card>
-              )}
-            </div>
-
-            <div className="text-sm text-gray-500">
-              <p>Nota: El acceso a la cámara requiere:</p>
-              <ul className="list-disc pl-5 mt-1 space-y-1">
-                <li>Permisos del navegador</li>
-                <li>Conexión HTTPS (excepto en localhost)</li>
-                <li>Dispositivo con cámara</li>
-              </ul>
-            </div>
-          </TabsContent>
-
-          <TabsContent value="manual" className="space-y-4">
-            <form onSubmit={handleManualSubmit} className="space-y-4">
-              <div className="space-y-2">
-                <Label htmlFor="manualCode">Código QR</Label>
-                <Input
-                  id="manualCode"
-                  placeholder="Ingrese el código (ej: PART001)"
-                  value={manualCode}
-                  onChange={(e) => setManualCode(e.target.value)}
-                  disabled={loading}
-                />
-              </div>
-
-              <Button type="submit" className="w-full" disabled={!manualCode || loading}>
-                {loading ? "Verificando..." : "Verificar Código"}
-              </Button>
-            </form>
-
-            <div className="p-3 bg-blue-50 rounded-md text-sm text-blue-800">
-              <p className="font-medium mb-1">Códigos de prueba disponibles:</p>
-              <ul className="list-disc pl-5 space-y-1">
-                <li>PART001 - Juan Pérez (Válido)</li>
-                <li>PART002 - María García (Válido)</li>
-                <li>PART003 - Carlos Rodríguez (Ya usado)</li>
-                <li>PART004 - Ana Martínez (Válido)</li>
-                <li>PART005 - Luis Sánchez (Válido)</li>
-              </ul>
-            </div>
-          </TabsContent>
-        </Tabs>
       )}
+
+
+      {qrValue ? (
+        <div className="mb-6 flex flex-col items-center text-center space-y-4">
+        <div className="w-full max-w-md p-4 bg-green-50 border border-green-300 rounded-md shadow-md">
+          <h3 className="font-bold text-green-700 text-lg">QR Detectado</h3>
+        </div>
+    
+        <button
+          onClick={resetScanner}
+          className="px-5 py-2 mt-2 bg-blue-500 hover:bg-blue-600 text-white rounded transition"
+        >
+          Escanear otro código
+        </button>
+        </div>
+      ): (
+        <>
+          {/* Contenedor para el escáner */}
+          <div 
+            id="qr-reader" 
+            ref={scannerRef} 
+            className="mb-4 w-full border rounded-md overflow-hidden"
+            style={{ minHeight: "300px" }}
+          />
+          
+          <div className="flex gap-2 mb-4">
+            <button 
+              onClick={startScanner}
+              className="flex-1 px-4 py-2 bg-green-500 hover:bg-green-600 text-white rounded"
+              disabled={!scannerReady || status.includes("Escaneando")}
+            >
+              Iniciar Escáner
+            </button>
+            <button 
+              onClick={resetScanner} // ahora reinicia todo
+              className="flex-1 px-4 py-2 bg-yellow-500 hover:bg-yellow-600 text-white rounded"
+            >
+              Detener Escáner
+            </button>
+          </div>
+        </>
+      )}
+      
+      {/* Logs de depuración */}
+      <div className="mt-4">
+        <h3 className="font-bold mb-2">Log de Depuración:</h3>
+        <div className="max-h-40 overflow-y-auto p-2 bg-gray-100 rounded text-xs font-mono">
+          {logs.length === 0 ? (
+            <p className="text-gray-500">No hay información de depuración</p>
+          ) : (
+            logs.map((line, i) => <div key={i} className="mb-1">{line}</div>)
+          )}
+        </div>
+      </div>
     </div>
   )
+}
+
+// Declaración para TypeScript
+declare global {
+  interface Window {
+    Html5Qrcode: any;
+  }
 }
