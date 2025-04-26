@@ -99,7 +99,7 @@ export default function Html5QRCodeScanner() {
               setStatus("✅ Asistencia registrada")
               addLog("Servidor confirmó asistencia.")
             } else {
-              setStatus("❌ Código QR no permitido")
+              setStatus("❌ Código QR rechazado")
               addLog("Servidor rechazó el código.")
             }
         
@@ -152,9 +152,17 @@ export default function Html5QRCodeScanner() {
     stopScanner()
   }
 
+  // Reiniciar
+  const resetScannerU = () => {
+    setQrValue(null)
+    setLogs([])
+    setStatus("Esperando inicialización")
+    startScanner()
+  }
+
   return (
     <div className="p-4 max-w-md mx-auto">
-      <h2 className="text-xl font-bold mb-4">Escáner QR</h2>
+      <h2 className="text-xl font-bold mb-4">Acerque el telefono y baje un poco su brillo</h2>
       
       {qrValue && respuestaServidor !== null && (
         <div
@@ -172,7 +180,7 @@ export default function Html5QRCodeScanner() {
 
           <div>
             <h3 className="text-lg font-semibold">
-              {respuestaServidor === 1 ? "✅ Asistencia registrada" : "❌ Código QR no permitido"}
+              {respuestaServidor === 1 ? "✅ Asistencia registrada, Bienvenido!!" : "❌ Código QR no permitido, revise si es el QR brindado"}
             </h3>
             <p className="text-sm mt-1 break-all">{qrValue}</p>
           </div>
@@ -187,7 +195,7 @@ export default function Html5QRCodeScanner() {
         </div>
     
         <button
-          onClick={resetScanner}
+          onClick={resetScannerU}
           className="px-5 py-2 mt-2 bg-blue-500 hover:bg-blue-600 text-white rounded transition"
         >
           Escanear otro código
@@ -220,18 +228,6 @@ export default function Html5QRCodeScanner() {
           </div>
         </>
       )}
-      
-      {/* Logs de depuración */}
-      <div className="mt-4">
-        <h3 className="font-bold mb-2">Log de Depuración:</h3>
-        <div className="max-h-40 overflow-y-auto p-2 bg-gray-100 rounded text-xs font-mono">
-          {logs.length === 0 ? (
-            <p className="text-gray-500">No hay información de depuración</p>
-          ) : (
-            logs.map((line, i) => <div key={i} className="mb-1">{line}</div>)
-          )}
-        </div>
-      </div>
     </div>
   )
 }
